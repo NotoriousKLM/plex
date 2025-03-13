@@ -1,0 +1,217 @@
+version: "3.9"
+
+networks:
+  gluetun_network:
+    ipam:
+      config:
+        - subnet: 172.16.16.0/24
+  default:
+    driver: bridge
+
+services:
+  gluetun:
+    image: qmcgaw/gluetun
+    container_name: gluetun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    networks:
+      gluetun_network:
+        ipv4_address: 172.16.16.2
+    ports:
+      - 8888:8888/tcp   # HTTP proxy
+      - 8388:8388/tcp   # Shadowsocks
+      - 8388:8388/udp   # Shadowsocks
+      - 8001:8000/tcp   # HTTP access
+      - 8081:8081/tcp   # qbittorrent
+      - 6881:6881/tcp   # qbittorrent
+      - 6881:6881/udp   # qbittorrent
+    volumes:
+      - /home/plex/plex_services/Gluetun/gluetun:/gluetun
+    environment:
+      - VPN_SERVICE_PROVIDER=cyberghost
+      - OPENVPN_USER=Xx5JdHPgV5
+      - OPENVPN_PASSWORD=Xye6rwk7uQ
+      - OPENVPN_CONFIG=openvpn.ovpn
+      - SERVER_COUNTRIES='United States'
+      - TZ=America/Chicago
+      - UPDATER_PERIOD=6h
+      - ROUTE_EXCEPTIONS=192.168.68.0/24
+    restart: unless-stopped
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    network_mode: service:gluetun
+    environment:
+      - PUID=1001
+      - PGID=1001
+      - TZ=America/Chicago
+      - WEBUI_PORT=8081
+    volumes:
+      - /home/plex/plex_services/qbittorrent/config:/config
+      - /media/plexmedia/Downloads/qbittorrent:/downloads
+    restart: unless-stopped
+
+  sabnzbd:
+    image: lscr.io/linuxserver/sabnzbd:latest
+    container_name: sabnzbd
+    environment:
+      - PUID=1001
+      - PGID=1001
+      - TZ=America/Chicago
+    volumes:
+      - /home/plex/plex_services/sabnzbd/config:/config
+      - /media/plexmedia/Downloads/sabnzbd:/downloads
+      - /media/plexmedia/Downloads/Incomplete/sabnzbd:/incomplete-downloads
+      - /home/plex/plex_services/Backups/sabnzbd:/backups
+    ports:
+      - "8080:8080"
+    networks:
+      - default
+    restart: unless-stopped
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    environment:
+      - PUID=1001
+      - PGID=1001
+      - TZ=America/Chicago
+    volumes:
+      - /home/plex/plex_services/prowlarr/config:/config
+      - /media/plexmedia/Downloads/qbittorrent/Prowlarr:/downloads/qbittorrent
+      - /media/plexmedia/Downloads/sabnzbd/Prowlarr:/downloads/sabnzbd
+      - /home/plex/plex_services/Backups/prowlarr:/backups
+    ports:
+      - "9696:9696"
+    networks:
+      - default
+    restart: unless-stopped
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    environment:
+      - PUID=1001
+      - PGID=1001
+      - TZ=America/Chicago
+    volumes:
+      - /home/plex/plex_services/radarr/config:/config
+      - /media/plexmedia/Downloads/qbittorrent/Radarr:/downloads/qbittorrent
+      - /media/plexmedia/Downloads/sabnzbd:/downloads
+      - /media/plexmedia/Movies:/movies
+      - /home/plex/plex_services/Backups/radarr:/backups
+    ports:
+      - "7878:7878"
+    networks:
+      - default
+    restart: unless-stopped
+
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    environment:
+      - PUID=1001
+      - PGID=1001
+      - TZ=America/Chicago
+    volumes:
+      - /home/plex/plex_services/sonarr/config:/config
+      - /media/plexmedia/Downloads/qbittorrent/Sonarr:/downloads/qbittorrent
+      - /media/plexmedia/Downloads/sabnzbd:/downloads
+      - "/media/plexmedia/TV Shows:/tv"
+      - /media/plexmedia/Anime:/anime
+      - /home/plex/plex_services/Backups/sonarr:/backups
+    ports:
+      - "8989:8989"
+    networks:
+      - default
+    restart: unless-stopped
+
+  tautulli:
+    image: ghcr.io/tautulli/tautulli
+    container_name: tautulli
+    restart: unless-stopped
+    volumes:
+      - /home/plex/plex_services/tautulli/config:/config
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Chicago
+    ports:
+      - "8181:8181"
+
+  traefik:
+    image: traefik:v2.9
+    container_name: traefik
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.file.filename=/dynamic.yaml"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "/home/plex/Documents/letsencrypt:/certs"
+      - "./traefik/dynamic.yaml:/dynamic.yaml:ro"
+    restart: unless-stopped
+    networks:
+      - default
+
+  overseerr:
+    image: sctx/overseerr:latest
+    container_name: overseerr
+    environment:
+      - LOG_LEVEL=debug
+      - TZ=America/Chicago
+      - PORT=5055
+    ports:
+      - "5055:5055"
+    volumes:
+      - /home/plex/plex_services/Overseerr/config:/app/config
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.overseerr-rtr.entrypoints=websecure"
+      - "traefik.http.routers.overseerr-rtr.rule=Host(`overseerr.kohlmedia.com`)"
+      - "traefik.http.routers.overseerr-rtr.tls=true"
+      - "traefik.http.routers.overseerr-rtr.service=overseerr-svc"
+      - "traefik.http.services.overseerr-svc.loadbalancer.server.port=5055"
+    restart: unless-stopped
+    networks:
+      - default
+
+  plex:
+    image: linuxserver/plex
+    container_name: plex
+    network_mode: host
+    environment:
+      - PUID=1001
+      - PGID=1001
+      - TZ=America/Chicago
+      - VERSION=docker
+      - PLEX_CLAIM=claim-cZyZdFW4vB1sVk2yBE2e
+      - PLEX_MEDIA_SERVER_PREFER_IPV4=1
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+    runtime: nvidia
+    volumes:
+      - /home/plex/plex_services/plex/config:/config
+      - /media/plexmedia/Movies:/data/movies
+      - "/media/plexmedia/TV Shows:/data/tvshows"
+      - /media/plexmedia/Anime:/data/anime
+    restart: unless-stopped
+
+  watchtower:
+    image: containrrr/watchtower
+    container_name: watchtower
+    restart: always
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      TZ: US/Pacific
+      WATCHTOWER_CLEANUP: 'true'
+      WATCHTOWER_SCHEDULE: 0 0 2 * * 0
